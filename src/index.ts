@@ -1,5 +1,5 @@
-import { Server } from "@modelcontextprotocol/sdk/server";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import dotenv from "dotenv";
 
@@ -30,7 +30,7 @@ async function fetchOpenFda(params: FetchParams) {
 }
 
 async function main() {
-  const server = new Server(
+  const server = new McpServer(
     { name: "mcp-openfda-drug-label", version: "0.1.0" },
     { capabilities: { tools: {} } }
   );
