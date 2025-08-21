@@ -13,15 +13,18 @@ import { z } from "zod";
 const DrugLabelSearchParamsSchema = z.object({
   search: z.string().optional(),
   count: z.string().optional(),
-  skip: z.number().optional(),
-  limit: z.number().optional()
+  // accept number-like strings for pagination
+  skip: z.coerce.number().int().min(0).optional().default(0),
+  // OpenFDA allows up to 1000
+  limit: z.coerce.number().int().min(1).max(1000).optional().default(10),
 });
 
 type DrugLabelSearchParams = z.infer<typeof DrugLabelSearchParamsSchema>;
 
 const DrugQueryParamsSchema = z.object({
   drug_name: z.string(),
-  limit: z.number().optional()
+  // accept number-like strings, default to 5 items
+  limit: z.coerce.number().int().min(1).max(100).optional().default(5),
 });
 
 type DrugQueryParams = z.infer<typeof DrugQueryParamsSchema>;
