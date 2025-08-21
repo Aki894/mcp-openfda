@@ -263,7 +263,8 @@ class OpenFDAServer {
     
     const data = await this.makeRequest({
       search: searchQuery,
-      limit: limit
+      limit: limit,
+      skip: 0
     });
 
     const adverseReactions = data.results?.map(result => ({
@@ -292,7 +293,8 @@ class OpenFDAServer {
     
     const data = await this.makeRequest({
       search: searchQuery,
-      limit: limit
+      limit: limit,
+      skip: 0
     });
 
     const warnings = data.results?.map(result => ({
@@ -322,7 +324,8 @@ class OpenFDAServer {
     
     const data = await this.makeRequest({
       search: searchQuery,
-      limit: limit
+      limit: limit,
+      skip: 0
     });
 
     const indications = data.results?.map(result => ({
