@@ -1,152 +1,333 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+#!/usr/bin/env node
+
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
-import dotenv from "dotenv";
+import {
+  CallToolRequestSchema,
+  ErrorCode,
+  ListToolsRequestSchema,
+  McpError,
+} from "@modelcontextprotocol/sdk/types.js";
 
-dotenv.config();
-
-const OPENFDA_BASE = "https://api.fda.gov/drug/label.json";
-const API_KEY = process.env.OPENFDA_API_KEY;
-
-interface FetchParams { [key: string]: string | number | undefined }
-
-function buildUrl(params: FetchParams): string {
-  const url = new URL(OPENFDA_BASE);
-  for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined) url.searchParams.set(k, String(v));
-  }
-  if (API_KEY) url.searchParams.set("api_key", API_KEY);
-  return url.toString();
+interface DrugLabelSearchParams {
+  search?: string;
+  count?: string;
+  skip?: number;
+  limit?: number;
 }
 
-async function fetchOpenFda(params: FetchParams) {
-  const url = buildUrl(params);
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`openFDA error: ${res.status} ${res.statusText} - ${text}`);
-  }
-  return res.json();
+interface OpenFDAResponse {
+  meta: {
+    disclaimer: string;
+    terms: string;
+    license: string;
+    last_updated: string;
+    results: {
+      skip: number;
+      limit: number;
+      total: number;
+    };
+  };
+  results: any[];
 }
 
-async function main() {
-  const server = new McpServer(
-    { name: "mcp-openfda-drug-label", version: "0.1.0" },
-    { capabilities: { tools: {} } }
-  );
+class OpenFDAServer {
+  private server: Server;
+  private baseUrl = "https://api.fda.gov/drug/label.json";
 
-  // Define schemas and types to avoid implicit any
-  const searchSchema = z.object({
-    query: z
-      .string()
-      .describe('openFDA search query, e.g., "openfda.brand_name:ibuprofen"'),
-    limit: z.number().int().min(1).max(100).optional().default(10),
-    skip: z.number().int().min(0).optional().default(0),
-    fields: z.string().optional().describe("Comma-separated fields to return"),
-    sort: z.string().optional().describe("Sort expression, e.g., 'effective_time:desc'"),
-  });
-  type SearchInput = z.infer<typeof searchSchema>;
-
-  const setIdSchema = z.object({ set_id: z.string().min(1) });
-  type SetIdInput = z.infer<typeof setIdSchema>;
-
-  const ndcSchema = z.object({
-    ndc: z.string().min(1).describe("NDC product or package code"),
-    limit: z.number().int().min(1).max(100).optional().default(10),
-    skip: z.number().int().min(0).optional().default(0),
-  });
-  type NdcInput = z.infer<typeof ndcSchema>;
-
-  const nameSchema = z.object({
-    name: z.string().min(1).describe("Brand or generic name"),
-    limit: z.number().int().min(1).max(100).optional().default(10),
-    skip: z.number().int().min(0).optional().default(0),
-  });
-  type NameInput = z.infer<typeof nameSchema>;
-
-  // General search
-  server.tool(
-    {
-      name: "search_labels",
-      description:
-        "Search openFDA drug labels using an arbitrary query syntax. See https://open.fda.gov/apis/drug/label/ for query grammar.",
-      inputSchema: searchSchema,
-    },
-    async (input: SearchInput) => {
-      const { query, limit = 10, skip = 0, fields, sort } = input;
-      const data = await fetchOpenFda({
-        search: query,
-        limit,
-        skip,
-        ...(fields ? { fields } : {}),
-        ...(sort ? { sort } : {}),
-      });
-      return {
-        content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-      };
-    }
-  );
-
-  // By set_id
-  server.tool(
-    {
-      name: "get_label_by_set_id",
-      description: "Get a specific label document by set_id.",
-      inputSchema: setIdSchema,
-    },
-    async ({ set_id }: SetIdInput) => {
-      const data = await fetchOpenFda({ search: `set_id:${set_id}`, limit: 1 });
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-    }
-  );
-
-  // By NDC (product or package)
-  server.tool(
-    {
-      name: "get_label_by_ndc",
-      description: "Get labels by NDC (product or package).",
-      inputSchema: ndcSchema,
-    },
-    async ({ ndc, limit = 10, skip = 0 }: NdcInput) => {
-      const q = `(openfda.package_ndc:"${ndc}")+(openfda.product_ndc:"${ndc}")`;
-      const data = await fetchOpenFda({ search: q, limit, skip });
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-    }
-  );
-
-  // By drug name (brand or generic)
-  server.tool(
-    {
-      name: "get_label_by_drug_name",
-      description: "Get labels matching a brand or generic name.",
-      inputSchema: nameSchema,
-    },
-    async ({ name, limit = 10, skip = 0 }: NameInput) => {
-      const escaped = name.replace(/"/g, '\\"');
-      const q = `(openfda.brand_name:"${escaped}")+(openfda.generic_name:"${escaped}")`;
-      const data = await fetchOpenFda({ search: q, limit, skip });
-      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-    }
-  );
-
-  // Health check
-  server.tool(
-    { name: "health", description: "Check connectivity with openFDA.", inputSchema: z.object({}) },
-    async () => {
-      try {
-        await fetchOpenFda({ limit: 1 });
-        return { content: [{ type: "text", text: "ok" }] };
-      } catch (e: any) {
-        return { content: [{ type: "text", text: `error: ${e.message}` }] };
+  constructor() {
+    this.server = new Server(
+      {
+        name: "openfda-drug-label",
+        version: "0.1.0",
+      },
+      {
+        capabilities: {
+          tools: {},
+        },
       }
-    }
-  );
+    );
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+    this.setupToolHandlers();
+    
+    // Error handling
+    this.server.onerror = (error) => console.error("[MCP Error]", error);
+    process.on("SIGINT", async () => {
+      await this.server.close();
+      process.exit(0);
+    });
+  }
+
+  private setupToolHandlers() {
+    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: [
+        {
+          name: "search_drug_labels",
+          description: "Search FDA drug labels using OpenFDA API. Returns drug labeling information including indications, contraindications, warnings, and adverse reactions.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              search: {
+                type: "string",
+                description: "Search query. Can search by drug name, active ingredient, manufacturer, etc. Example: 'aspirin', 'ibuprofen', 'openfda.brand_name:tylenol'"
+              },
+              count: {
+                type: "string", 
+                description: "Field to count results by. Example: 'openfda.manufacturer_name.exact'"
+              },
+              skip: {
+                type: "number",
+                description: "Number of records to skip (for pagination)",
+                default: 0
+              },
+              limit: {
+                type: "number", 
+                description: "Maximum number of records to return (1-1000)",
+                default: 10,
+                minimum: 1,
+                maximum: 1000
+              }
+            }
+          }
+        },
+        {
+          name: "get_drug_adverse_reactions",
+          description: "Get adverse reactions information for a specific drug from FDA labels",
+          inputSchema: {
+            type: "object",
+            properties: {
+              drug_name: {
+                type: "string",
+                description: "Name of the drug to search for adverse reactions"
+              },
+              limit: {
+                type: "number",
+                description: "Maximum number of records to return",
+                default: 5,
+                minimum: 1,
+                maximum: 100
+              }
+            },
+            required: ["drug_name"]
+          }
+        },
+        {
+          name: "get_drug_warnings",
+          description: "Get warnings and precautions for a specific drug from FDA labels",
+          inputSchema: {
+            type: "object",
+            properties: {
+              drug_name: {
+                type: "string", 
+                description: "Name of the drug to search for warnings"
+              },
+              limit: {
+                type: "number",
+                description: "Maximum number of records to return",
+                default: 5,
+                minimum: 1,
+                maximum: 100
+              }
+            },
+            required: ["drug_name"]
+          }
+        },
+        {
+          name: "get_drug_indications",
+          description: "Get indications and usage information for a specific drug from FDA labels",
+          inputSchema: {
+            type: "object",
+            properties: {
+              drug_name: {
+                type: "string",
+                description: "Name of the drug to search for indications"
+              },
+              limit: {
+                type: "number",
+                description: "Maximum number of records to return", 
+                default: 5,
+                minimum: 1,
+                maximum: 100
+              }
+            },
+            required: ["drug_name"]
+          }
+        }
+      ],
+    }));
+
+    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+      const { name, arguments: args } = request.params;
+
+      try {
+        switch (name) {
+          case "search_drug_labels":
+            return await this.searchDrugLabels(args as DrugLabelSearchParams);
+          
+          case "get_drug_adverse_reactions":
+            return await this.getDrugAdverseReactions(args.drug_name, args.limit || 5);
+          
+          case "get_drug_warnings":
+            return await this.getDrugWarnings(args.drug_name, args.limit || 5);
+          
+          case "get_drug_indications":
+            return await this.getDrugIndications(args.drug_name, args.limit || 5);
+          
+          default:
+            throw new McpError(
+              ErrorCode.MethodNotFound,
+              `Unknown tool: ${name}`
+            );
+        }
+      } catch (error) {
+        if (error instanceof McpError) {
+          throw error;
+        }
+        throw new McpError(
+          ErrorCode.InternalError,
+          `Error executing tool ${name}: ${error}`
+        );
+      }
+    });
+  }
+
+  private async makeRequest(params: DrugLabelSearchParams): Promise<OpenFDAResponse> {
+    const url = new URL(this.baseUrl);
+    
+    if (params.search) {
+      url.searchParams.set("search", params.search);
+    }
+    if (params.count) {
+      url.searchParams.set("count", params.count);
+    }
+    if (params.skip) {
+      url.searchParams.set("skip", params.skip.toString());
+    }
+    if (params.limit) {
+      url.searchParams.set("limit", params.limit.toString());
+    }
+
+    const response = await fetch(url.toString());
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenFDA API error (${response.status}): ${errorText}`);
+    }
+
+    return await response.json();
+  }
+
+  private async searchDrugLabels(params: DrugLabelSearchParams) {
+    const data = await this.makeRequest(params);
+    
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            meta: data.meta,
+            results_count: data.results?.length || 0,
+            results: data.results || []
+          }, null, 2)
+        }
+      ]
+    };
+  }
+
+  private async getDrugAdverseReactions(drugName: string, limit: number) {
+    const searchQuery = `openfda.brand_name:"${drugName}" OR openfda.generic_name:"${drugName}" OR openfda.substance_name:"${drugName}"`;
+    
+    const data = await this.makeRequest({
+      search: searchQuery,
+      limit: limit
+    });
+
+    const adverseReactions = data.results?.map(result => ({
+      drug_name: result.openfda?.brand_name?.[0] || result.openfda?.generic_name?.[0] || "Unknown",
+      manufacturer: result.openfda?.manufacturer_name?.[0] || "Unknown",
+      adverse_reactions: result.adverse_reactions || [],
+      contraindications: result.contraindications || []
+    })) || [];
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            query: drugName,
+            total_results: data.meta?.results?.total || 0,
+            adverse_reactions_data: adverseReactions
+          }, null, 2)
+        }
+      ]
+    };
+  }
+
+  private async getDrugWarnings(drugName: string, limit: number) {
+    const searchQuery = `openfda.brand_name:"${drugName}" OR openfda.generic_name:"${drugName}" OR openfda.substance_name:"${drugName}"`;
+    
+    const data = await this.makeRequest({
+      search: searchQuery,
+      limit: limit
+    });
+
+    const warnings = data.results?.map(result => ({
+      drug_name: result.openfda?.brand_name?.[0] || result.openfda?.generic_name?.[0] || "Unknown",
+      manufacturer: result.openfda?.manufacturer_name?.[0] || "Unknown",
+      warnings: result.warnings || [],
+      precautions: result.precautions || [],
+      boxed_warning: result.boxed_warning || []
+    })) || [];
+
+    return {
+      content: [
+        {
+          type: "text", 
+          text: JSON.stringify({
+            query: drugName,
+            total_results: data.meta?.results?.total || 0,
+            warnings_data: warnings
+          }, null, 2)
+        }
+      ]
+    };
+  }
+
+  private async getDrugIndications(drugName: string, limit: number) {
+    const searchQuery = `openfda.brand_name:"${drugName}" OR openfda.generic_name:"${drugName}" OR openfda.substance_name:"${drugName}"`;
+    
+    const data = await this.makeRequest({
+      search: searchQuery,
+      limit: limit
+    });
+
+    const indications = data.results?.map(result => ({
+      drug_name: result.openfda?.brand_name?.[0] || result.openfda?.generic_name?.[0] || "Unknown",
+      manufacturer: result.openfda?.manufacturer_name?.[0] || "Unknown", 
+      indications_and_usage: result.indications_and_usage || [],
+      dosage_and_administration: result.dosage_and_administration || []
+    })) || [];
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            query: drugName,
+            total_results: data.meta?.results?.total || 0,
+            indications_data: indications
+          }, null, 2)
+        }
+      ]
+    };
+  }
+
+  async run() {
+    const transport = new StdioServerTransport();
+    await this.server.connect(transport);
+    console.error("OpenFDA Drug Label MCP server running on stdio");
+  }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+const server = new OpenFDAServer();
+server.run().catch(console.error);
