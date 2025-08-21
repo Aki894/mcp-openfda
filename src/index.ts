@@ -50,6 +50,11 @@ class OpenFDAServer {
       {
         name: "openfda-drug-label",
         version: "0.1.0",
+      },
+      {
+        capabilities: {
+          tools: {},
+        },
       }
     );
 
