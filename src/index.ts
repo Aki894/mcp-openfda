@@ -170,7 +170,22 @@ class OpenFDAServer {
     }));
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const { name, arguments: args } = request.params;
+      const { name, arguments: rawArgs } = request.params;
+
+      // Handle cases where arguments are double-encoded as a JSON string
+      let args: any;
+      if (typeof rawArgs === 'string') {
+        try {
+          args = JSON.parse(rawArgs);
+        } catch (e) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            'Failed to parse arguments string: ' + (e as Error).message
+          );
+        }
+      } else {
+        args = rawArgs;
+      }
 
       if (!args) {
         throw new McpError(
