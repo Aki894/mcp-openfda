@@ -8,13 +8,23 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 
-interface DrugLabelSearchParams {
-  search?: string;
-  count?: string;
-  skip?: number;
-  limit?: number;
-}
+const DrugLabelSearchParamsSchema = z.object({
+  search: z.string().optional(),
+  count: z.string().optional(),
+  skip: z.number().optional(),
+  limit: z.number().optional()
+});
+
+type DrugLabelSearchParams = z.infer<typeof DrugLabelSearchParamsSchema>;
+
+const DrugQueryParamsSchema = z.object({
+  drug_name: z.string(),
+  limit: z.number().optional()
+});
+
+type DrugQueryParams = z.infer<typeof DrugQueryParamsSchema>;
 
 interface OpenFDAResponse {
   meta: {
@@ -40,11 +50,6 @@ class OpenFDAServer {
       {
         name: "openfda-drug-label",
         version: "0.1.0",
-      },
-      {
-        capabilities: {
-          tools: {},
-        },
       }
     );
 
@@ -159,19 +164,30 @@ class OpenFDAServer {
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
 
+      if (!args) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          "Missing arguments"
+        );
+      }
+
       try {
         switch (name) {
           case "search_drug_labels":
-            return await this.searchDrugLabels(args as DrugLabelSearchParams);
+            const searchParams = DrugLabelSearchParamsSchema.parse(args);
+            return await this.searchDrugLabels(searchParams);
           
           case "get_drug_adverse_reactions":
-            return await this.getDrugAdverseReactions(args.drug_name, args.limit || 5);
+            const adverseParams = DrugQueryParamsSchema.parse(args);
+            return await this.getDrugAdverseReactions(adverseParams.drug_name, adverseParams.limit || 5);
           
           case "get_drug_warnings":
-            return await this.getDrugWarnings(args.drug_name, args.limit || 5);
+            const warningParams = DrugQueryParamsSchema.parse(args);
+            return await this.getDrugWarnings(warningParams.drug_name, warningParams.limit || 5);
           
           case "get_drug_indications":
-            return await this.getDrugIndications(args.drug_name, args.limit || 5);
+            const indicationParams = DrugQueryParamsSchema.parse(args);
+            return await this.getDrugIndications(indicationParams.drug_name, indicationParams.limit || 5);
           
           default:
             throw new McpError(
