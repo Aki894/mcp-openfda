@@ -98,7 +98,7 @@ class OpenFDAServer {
                 description: "Maximum number of records to return (1-1000)",
                 default: 10,
                 minimum: 1,
-                maximum: 1000
+                maximum: 100
               }
             }
           }
@@ -118,7 +118,7 @@ class OpenFDAServer {
                 description: "Maximum number of records to return",
                 default: 5,
                 minimum: 1,
-                maximum: 100
+                maximum: 10
               }
             },
             required: ["drug_name"]
@@ -139,7 +139,7 @@ class OpenFDAServer {
                 description: "Maximum number of records to return",
                 default: 5,
                 minimum: 1,
-                maximum: 100
+                maximum: 10
               }
             },
             required: ["drug_name"]
@@ -160,7 +160,7 @@ class OpenFDAServer {
                 description: "Maximum number of records to return", 
                 default: 5,
                 minimum: 1,
-                maximum: 100
+                maximum: 10
               }
             },
             required: ["drug_name"]
