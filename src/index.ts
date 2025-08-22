@@ -24,7 +24,7 @@ type DrugLabelSearchParams = z.infer<typeof DrugLabelSearchParamsSchema>;
 const DrugQueryParamsSchema = z.object({
   drug_name: z.string(),
   // accept number-like strings, default to 5 items
-  limit: z.coerce.number().int().min(1).max(10).optional().default(5),
+  limit: z.coerce.number().int().min(1).max(5).optional().default(5),
 });
 
 type DrugQueryParams = z.infer<typeof DrugQueryParamsSchema>;
