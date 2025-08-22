@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
-import express from 'express';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { z } from 'zod';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 
 // Reuse schemas from index.ts
 const DrugLabelSearchParamsSchema = z.object({
@@ -77,7 +79,7 @@ class OpenFDAHTTPServer {
 
   private setupRoutes() {
     // OpenAPI specification endpoint
-    this.app.get('/openapi.json', (req, res) => {
+    this.app.get('/openapi.json', (req: Request, res: Response) => {
       const openApiSpec = {
         openapi: "3.0.3",
         info: {
@@ -230,7 +232,7 @@ class OpenFDAHTTPServer {
     });
 
     // Drug labels search endpoint
-    this.app.get('/drug-labels', async (req, res) => {
+    this.app.get('/drug-labels', async (req: Request, res: Response) => {
       try {
         const params = DrugLabelSearchParamsSchema.parse(req.query);
         const data = await this.makeRequest(params);
@@ -249,7 +251,7 @@ class OpenFDAHTTPServer {
     });
 
     // Drug adverse reactions endpoint
-    this.app.get('/drug/:name/adverse-reactions', async (req, res) => {
+    this.app.get('/drug/:name/adverse-reactions', async (req: Request, res: Response) => {
       try {
         const { name } = req.params;
         const { limit = 3 } = req.query;
@@ -285,7 +287,7 @@ class OpenFDAHTTPServer {
     });
 
     // Drug warnings endpoint
-    this.app.get('/drug/:name/warnings', async (req, res) => {
+    this.app.get('/drug/:name/warnings', async (req: Request, res: Response) => {
       try {
         const { name } = req.params;
         const { limit = 3 } = req.query;
@@ -322,7 +324,7 @@ class OpenFDAHTTPServer {
     });
 
     // Drug indications endpoint
-    this.app.get('/drug/:name/indications', async (req, res) => {
+    this.app.get('/drug/:name/indications', async (req: Request, res: Response) => {
       try {
         const { name } = req.params;
         const { limit = 3 } = req.query;
@@ -358,7 +360,7 @@ class OpenFDAHTTPServer {
     });
 
     // Health check endpoint
-    this.app.get('/health', (req, res) => {
+    this.app.get('/health', (req: Request, res: Response) => {
       res.json({ status: 'ok', timestamp: new Date().toISOString() });
     });
   }
@@ -371,8 +373,12 @@ class OpenFDAHTTPServer {
   }
 }
 
+// ES module compatibility for direct execution
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 // Start server if this file is run directly
-if (require.main === module) {
+if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
   const server = new OpenFDAHTTPServer();
   const port = process.env.PORT ? parseInt(process.env.PORT) : 3000;
   server.start(port);
